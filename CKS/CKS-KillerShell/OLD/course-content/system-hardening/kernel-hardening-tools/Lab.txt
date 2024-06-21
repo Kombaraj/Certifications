@@ -1,0 +1,78 @@
+Lab 1: AppArmor
+Check existing AppArmor profiles
+You're asked to verify if the following AppArmor profiles are available on node01 :
+
+docker-default
+snap.lxd.lxc
+ftpd
+/usr/sbin/tcpdump
+Create file /root/profiles.txt on node controlplane . It should contain only these profile names that are available on node01 .
+
+
+Solution
+
+Check existing profiles
+
+
+ssh node01
+    apparmor_status
+
+The /root/profiles.txt on node controlplane should look like
+
+
+docker-default
+snap.lxd.lxc
+/usr/sbin/tcpdump
+
+
+
+Ex2: Fix Deployment with wrong AppArmor config
+There is an existing Deployment named spacecow in Namespace moon .
+
+It should be configured to use AppArmor profile docker-default , but something seems wrong.
+
+Fix it.
+
+
+Tip
+
+The AppArmor profile will be configured via annotation, but specific for every container and not the whole Pod.
+
+
+Solution
+
+We need to use the annotation on Pod level, not Deployment level.
+
+And the annotation needs to reference the correct container name httpd .
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: spacecow
+  namespace: moon
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: spacecow
+  strategy: {}
+  template:
+    metadata:
+      labels:
+        app: spacecow
+      annotations:
+        container.apparmor.security.beta.kubernetes.io/httpd: localhost/docker-default
+    spec:
+      containers:
+      - image: httpd:2.4.52-alpine
+        name: httpd
+
+Verify
+
+On node01 we can run crictl ps .
+
+Then crictl inspect CONTAINER-ID | grep apparmor.
+
+
+
+

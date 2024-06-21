@@ -1,0 +1,86 @@
+Lab 1: Auditing Enable Audit Logging
+
+Ex1: Enable Audit Logging for giving Audit Policy
+
+Configure the Apiserver for Audit Logging.
+
+The log path should be /etc/kubernetes/audit-logs/audit.log on the host and inside the container.
+
+The existing Audit Policy to use is at /etc/kubernetes/audit-policy/policy.yaml . The path should be the same on the host and inside the container.
+
+Set argument --audit-log-maxsize=7
+
+Set argument --audit-log-maxbackup=2
+
+
+Solution:
+controlplane $ cat /etc/kubernetes/audit-policy/policy.yaml
+# /etc/kubernetes/audit/policy.yaml
+apiVersion: audit.k8s.io/v1
+kind: Policy
+rules:
+
+# log Secret resources audits, level Metadata
+- level: Metadata
+  resources:
+  - group: ""
+    resources: ["secrets"]
+
+# log node related audits, level RequestResponse
+- level: RequestResponse
+  userGroups: ["system:nodes"]
+
+# for everything else don't log anything
+- level: None
+
+
+Create the directory
+mkdir /etc/kubernetes/audit-logs
+
+Edit the /etc/kubernetes/manifests/kube-apiserver.yaml
+
+# add new Volumes
+volumes:
+  - name: audit-policy
+    hostPath:
+      path: /etc/kubernetes/audit-policy/policy.yaml
+      type: File
+  - name: audit-logs
+    hostPath:
+      path: /etc/kubernetes/audit-logs
+      type: DirectoryOrCreate
+
+# add new VolumeMounts
+volumeMounts:
+  - mountPath: /etc/kubernetes/audit-policy/policy.yaml
+    name: audit-policy
+    readOnly: true
+  - mountPath: /etc/kubernetes/audit-logs
+    name: audit-logs
+    readOnly: false
+
+# enable Audit Logs
+spec:
+  containers:
+  - command:
+    - kube-apiserver
+    - --audit-policy-file=/etc/kubernetes/audit-policy/policy.yaml
+    - --audit-log-path=/etc/kubernetes/audit-logs/audit.log
+    - --audit-log-maxsize=7
+    - --audit-log-maxbackup=2
+
+Wait for Apiserver restart
+watch crictl ps
+
+Verify
+
+stat /etc/kubernetes/audit-logs/audit.log
+
+cat /etc/kubernetes/manifests/kube-apiserver.yaml | grep audit-policy-file=/etc/kubernetes/audit-policy/policy.yaml
+
+cat /etc/kubernetes/manifests/kube-apiserver.yaml | grep audit-log-path=/etc/kubernetes/audit-logs/audit.log
+
+cat /etc/kubernetes/manifests/kube-apiserver.yaml | grep audit-log-maxsize=7
+
+cat /etc/kubernetes/manifests/kube-apiserver.yaml | grep audit-log-maxbackup=2
+

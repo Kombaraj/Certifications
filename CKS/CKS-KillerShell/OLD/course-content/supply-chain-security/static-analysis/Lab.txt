@@ -1,0 +1,436 @@
+Lab 1: Static Manual Analysis K8s
+Ex1: Analyse K8s Pod YAML
+Perform a manual static analysis on files /root/apps/app1-* considering security.
+
+Move the less secure file to /root/insecure
+
+
+Tip
+
+Enforcing a read-only root filesystem can make containers more secure.
+
+
+Solution
+
+controlplane $ cat app1-510d6362.yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: pod
+spec:
+  containers:
+  - name: main
+    image: alpine
+    command: ["/bin/sleep", "999999"]
+    livenessProbe:
+      exec:
+        command:
+        - cat
+        - /tmp/healthy
+      initialDelaySeconds: 5
+      periodSeconds: 5
+
+controlplane $ cat app1-30b5eba5.yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: pod
+spec:
+  containers:
+  - name: main
+    image: alpine
+    command: ["/bin/sleep", "999999"]
+    securityContext:
+      readOnlyRootFilesystem: true
+  dnsPolicy: ClusterFirst
+  restartPolicy: Always
+
+
+mv /root/apps/app1-510d6362.yaml /root/insecure
+
+
+Ex2: Analyse K8s Deployment YAML
+Perform a manual static analysis on files /root/apps/app2-* considering security.
+
+Move the less secure file to /root/insecure
+
+
+Tip
+
+Check the securityContext settings, just because there are some doesn't mean they do something good or at all.
+
+
+Solution
+
+controlplane $ cat app2-f720cbb4.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-deployment
+  labels:
+    app: nginx
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: nginx
+  template:
+    metadata:
+      labels:
+        app: nginx
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+      containers:
+      - name: nginx
+        image: nginx:1.21.6
+        ports:
+        - containerPort: 80
+
+controlplane $ cat app2-b917e60e.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+  labels:
+    app: web
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      containers:
+      - name: web
+        securityContext:
+          capabilities:
+            drop: []
+          allowPrivilegeEscalation: true
+        image: httpd
+        readinessProbe:
+          exec:
+            command:
+            - cat
+            - /tmp/healthy
+          initialDelaySeconds: 5
+          periodSeconds: 5
+
+
+File app2-b917e60e.yaml has some securityContext settings, but they don't drop any capabilities and even allow allowPrivilegeEscalation.
+
+
+mv /root/apps/app2-b917e60e.yaml /root/insecure
+
+
+Ex3: Analyse K8s StatefulSet YAML
+Perform a manual static analysis on files /root/apps/app3-* considering security.
+
+Move the less secure file to /root/insecure
+
+
+Tip
+
+If you face large files, search for settings like securityContext .
+
+
+Solution
+
+controlplane $ cat app3-819f4686.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx
+  labels:
+    app: nginx
+spec:
+  ports:
+  - port: 80
+    name: web
+  clusterIP: None
+  selector:
+    app: nginx
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: web
+spec:
+  selector:
+    matchLabels:
+      app: nginx
+  serviceName: "nginx"
+  replicas: 3
+  minReadySeconds: 10
+  template:
+    metadata:
+      labels:
+        app: nginx
+    spec:
+      terminationGracePeriodSeconds: 10
+      containers:
+      - name: nginx
+        image: registry.k8s.io/nginx-slim:0.8
+        ports:
+        - containerPort: 80
+          name: web
+        volumeMounts:
+        - name: www
+          mountPath: /usr/share/nginx/html
+        readinessProbe:
+          httpGet:
+            scheme: HTTPS
+            path: /index.html
+            port: 8443
+          initialDelaySeconds: 10
+          periodSeconds: 5
+        startupProbe:
+          httpGet:
+            scheme: HTTPS
+            path: /index.html
+            port: 8443
+          initialDelaySeconds: 10
+          periodSeconds: 5
+        securityContext:
+          privileged: true
+        livenessProbe:
+          httpGet:
+            scheme: HTTPS
+            path: /index.html
+            port: 8443
+          initialDelaySeconds: 10
+          periodSeconds: 5
+  volumeClaimTemplates:
+  - metadata:
+      name: www
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      storageClassName: "my-storage-class"
+      resources:
+        requests:
+          storage: 1Gi
+
+controlplane $ cat app3-905fe637.yaml
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mysql-set
+spec:
+  selector:
+    matchLabels:
+      app: mysql
+  serviceName: "mysql"
+  replicas: 3
+  template:
+    metadata:
+      labels:
+        app: mysql
+    spec:
+      terminationGracePeriodSeconds: 10
+      containers:
+      - name: mysql
+        image: mysql:5.7
+        ports:
+        - containerPort: 3306
+        volumeMounts:
+        - name: mysql-store
+          mountPath: /var/lib/mysql
+        securityContext:
+          privileged: false
+        env:
+          - name: MYSQL_ROOT_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: mysql-password
+                key: MYSQL_ROOT_PASSWORD
+        readinessProbe:
+          tcpSocket:
+            port: 3306
+          initialDelaySeconds: 10
+          periodSeconds: 5
+        startupProbe:
+          tcpSocket:
+            port: 3306
+          initialDelaySeconds: 10
+          periodSeconds: 5
+        livenessProbe:
+          tcpSocket:
+            port: 3306
+          initialDelaySeconds: 10
+          periodSeconds: 5
+  volumeClaimTemplates:
+  - metadata:
+      name: mysql-store
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      storageClassName: "linode-block-storage-retain"
+      resources:
+        requests:
+          storage: 5Gi
+
+
+
+
+We see usage of privileged: true .
+
+
+cat /root/apps/app3-819f4686.yaml | grep securityContext -A 3
+
+mv /root/apps/app3-819f4686.yaml /root/insecure
+
+
+
+
+Lab 2: Static Manual Analysis Docker
+Ex1: Analyse K8s Pod YAML
+Perform a manual static analysis on files /root/apps/app1-* considering security.
+
+Move the less secure file to /root/insecure
+
+
+Tip
+
+Using a smaller base image to run the application can be more secure.
+
+Dockerfile Best Practices
+
+
+Solution
+
+controlplane $ cat app1-9df32ce3-Dockerfile
+FROM ubuntu
+ARG DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y golang-go
+COPY app.go .
+RUN CGO_ENABLED=0 go build app.go
+CMD ["./app"]
+
+controlplane $ cat app1-214422c7-Dockerfile
+FROM ubuntu
+ARG DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y golang-go
+COPY app.go .
+RUN CGO_ENABLED=0 go build app.go
+FROM alpine
+COPY --from=0 /app .
+CMD ["./app"]
+
+
+File app1-214422c7-Dockerfile uses multiple stages, a larger for building and a smaller for running. This means it uses a Ubuntu stage for building and an Alpine stage for running. The shipped application will run on Alpine instead of Ubuntu. Because Alpine has a much smaller footprint it provides for example fewer pre-installed applications which could be counted as a possible attack surface.
+
+
+mv /root/apps/app1-9df32ce3-Dockerfile /root/insecure
+
+
+
+
+Ex2: Analyse K8s Deployment YAML
+Perform a manual static analysis on files /root/apps/app2-* considering security.
+
+Move the less secure file to /root/insecure
+
+
+Tip
+
+Running applications as not root inside a container can be more secure.
+
+Dockerfile Best Practices
+
+
+Solution
+
+controlplane $ cat app2-5cde5c3d-Dockerfile
+FROM ubuntu
+ARG DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y golang-go
+COPY app.go .
+RUN CGO_ENABLED=0 go build app.go
+FROM alpine:3.11.6
+COPY --from=0 /app .
+CMD ["./app"]
+controlplane $ cat app2-2782517e-Dockerfile
+FROM ubuntu:20.04
+ARG DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y golang-go=2:1.13~1ubuntu2
+COPY app.go .
+RUN CGO_ENABLED=0 go build app.go
+FROM alpine:3.12.0
+RUN addgroup -S appgroup && adduser -S appuser -G appgroup -h /home/appuser
+COPY --from=0 /app /home/appuser/
+USER appuser
+CMD ["/home/appuser/app"]
+
+
+
+
+
+File app2-2782517e-Dockerfile creates a new user and doesn't run the application as root. Not running a containerised application as root can provide security advantages if for example attackers are able to perform remote-code executions, because these would then be executed under a less privileged user instead of root.
+
+
+mv /root/apps/app2-5cde5c3d-Dockerfile /root/insecure
+
+
+Ex2: Analyse K8s StatefulSet YAML
+Perform a manual static analysis on files /root/apps/app3-* considering security.
+
+Move the less secure file to /root/insecure
+
+
+Tip
+
+Docker containers work with layers. Every FROM , COPY , RUN and CMD will create one layer.
+
+Dockerfile Best Practices
+
+
+Solution
+
+controlplane $ cat app3-1c8650b1-Dockerfile
+FROM ubuntu
+COPY my.cnf /etc/mysql/conf.d/my.cnf
+COPY mysqld_charset.cnf /etc/mysql/conf.d/mysqld_charset.cnf
+RUN apt-get update && \
+    apt-get -yq install mysql-server-5.6 &&
+COPY import_sql.sh /import_sql.sh
+COPY run.sh /run.sh
+RUN /etc/register.sh $SECRET_TOKEN
+EXPOSE 3306
+CMD ["/run.sh"]
+
+controlplane $ cat app3-4049a117-Dockerfile
+FROM ubuntu
+COPY my.cnf /etc/mysql/conf.d/my.cnf
+COPY mysqld_charset.cnf /etc/mysql/conf.d/mysqld_charset.cnf
+RUN apt-get update && \
+    apt-get -yq install mysql-server-5.6 &&
+COPY import_sql.sh /import_sql.sh
+COPY run.sh /run.sh
+RUN echo $SECRET_TOKEN > /tmp/token
+RUN /etc/register.sh /tmp/token
+RUN rm /tmp/token
+EXPOSE 3306
+CMD ["/run.sh"]
+
+
+File app3-4049a117-Dockerfile stores the temporarily used token at /tmp/token .
+
+This is persisted as layer in the container even though the file is later deleted.
+
+
+...
+RUN echo $SECRET_TOKEN > /tmp/token   # new layer
+RUN /etc/register.sh /tmp/token       # new layer
+RUN rm /tmp/token                     # new layer
+...
+
+Therefore:
+
+
+mv /root/apps/app3-4049a117-Dockerfile /root/insecure
+
+
+

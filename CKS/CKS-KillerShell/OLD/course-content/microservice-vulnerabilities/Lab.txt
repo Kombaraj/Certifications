@@ -1,0 +1,405 @@
+### Lab 1: Manage Kubernetes Secrets
+
+# access secret int etcd
+cat /etc/kubernetes/manifests/kube-apiserver.yaml | grep etcd
+
+ETCDCTL_API=3 etcdctl --cert /etc/kubernetes/pki/apiserver-etcd-client.crt --key /etc/kubernetes/pki/apiserver-etcd-client.key --cacert /etc/kubernetes/pki/etcd/ca.crt endpoint health
+
+# --endpoints "https://127.0.0.1:2379" not necessary because we’re on same node
+
+ETCDCTL_API=3 etcdctl --cert /etc/kubernetes/pki/apiserver-etcd-client.crt --key /etc/kubernetes/pki/apiserver-etcd-client.key --cacert /etc/kubernetes/pki/etcd/ca.crt get /registry/secrets/default/secret1
+
+
+## Ex1: Create Secrets
+- Create a Secret named holy with content creditcard=1111222233334444
+- Create Secret from file /opt/ks/secret-diver.yaml
+
+controlplane $ cat /opt/ks/secret-diver.yaml
+apiVersion: v1
+data:
+  hosts: MTI3LjAuMC4xCWxvY2FsaG9zdAoxMjcuMC4xLjEJaG9zdDAxCgojIFRoZSBmb2xsb3dpbmcgbGluZXMgYXJlIGRlc2lyYWJsZSBmb3IgSVB2NiBjYXBhYmxlIGhvc3RzCjo6MSAgICAgbG9jYWxob3N0IGlwNi1sb2NhbGhvc3QgaXA2LWxvb3BiYWNrCmZmMDI6OjEgaXA2LWFsbG5vZGVzCmZmMDI6OjIgaXA2LWFsbHJvdXRlcnMKMTI3LjAuMC4xIGhvc3QwMQoxMjcuMC4wLjEgaG9zdDAxCjEyNy4wLjAuMSBob3N0MDEKMTI3LjAuMC4xIGNvbnRyb2xwbGFuZQoxNzIuMTcuMC4zNSBub2RlMDEKMTcyLjE3LjAuMjMgY29udHJvbHBsYW5lCg==
+kind: Secret
+metadata:
+  name: diver
+
+
+
+Solution:
+controlplane $ echo MTI3LjAuMC4xCWxvY2FsaG9zdAoxMjcuMC4xLjEJaG9zdDAxCgojIFRoZSBmb2xsb3dpbmcgbGluZXMgYXJlIGRlc2lyYWJsZSBmb3IgSVB2NiBjYXBhYmxlIGhvc3RzCjo6MSAgICAgbG9jYWxob3N0IGlwNi1sb2NhbGhvc3QgaXA2LWxvb3BiYWNrCmZmMDI6OjEgaXA2LWFsbG5vZGVzCmZmMDI6OjIgaXA2LWFsbHJvdXRlcnMKMTI3LjAuMC4xIGhvc3QwMQoxMjcuMC4wLjEgaG9zdDAxCjEyNy4wLjAuMSBob3N0MDEKMTI3LjAuMC4xIGNvbnRyb2xwbGFuZQoxNzIuMTcuMC4zNSBub2RlMDEKMTcyLjE3LjAuMjMgY29udHJvbHBsYW5lCg | base64 -d
+        127.0.0.1       localhost
+        127.0.1.1       host01
+
+        # The following lines are desirable for IPv6 capable hosts
+        ::1     localhost ip6-localhost ip6-loopback
+        ff02::1 ip6-allnodes
+        ff02::2 ip6-allrouters
+        127.0.0.1 host01
+        127.0.0.1 host01
+        127.0.0.1 host01
+        127.0.0.1 controlplane
+        172.17.0.35 node01
+        172.17.0.23 controlplane
+
+kubectl create secret generic holy --from-literal creditcard=1111222233334444
+kubectl -f /opt/ks/secret-diver.yaml create
+
+
+## Ex2: Access Secrets in Pod
+
+Create a Pod named pod1 of image nginx
+Make Secret holy available as environment variable HOLY
+Mount Secret diver as volume. The file should be available under /etc/diver/hosts .
+Test env+volume access in the running Pod
+
+Tip
+
+This should work for the created Pod and it should show the content of Secret diver (under key hosts ).
+kubectl exec pod1 -- cat /etc/diver/hosts
+
+Solution
+
+apiVersion: v1
+kind: Pod
+metadata:
+  name: pod1
+spec:
+  volumes:
+  - name: diver
+    secret:
+      secretName: diver
+  containers:
+  - image: nginx
+    name: pod1
+    volumeMounts:
+      - name: diver
+        mountPath: /etc/diver
+    env:
+      - name: HOLY
+        valueFrom:
+          secretKeyRef:
+            name: holy
+            key: creditcard
+
+Verify
+
+kubectl exec pod1 -- env | grep "HOLY=1111222233334444"
+kubectl exec pod1 -- cat /etc/diver/hosts
+
+
+
+
+### Lab 2: Secret Read and Decode
+
+## Ex1: Read and decode the Secrets in Namespace one
+1. Get the Secrets of type Opaque that have been created in Namespace one .
+2. Create a new file called /opt/ks/one and store the base64-decoded values in that file. Each value needs to be stored on a new line.
+
+Solution:
+
+kubectl -n one get secret s1 -ojsonpath="{.data.data}" | base64 -d
+kubectl -n one get secret s2 -ojsonpath="{.data.data}" | base64 -d
+
+Your file /opt/ks/one should look like this:
+
+secret
+admin
+
+
+### Lab 3: Create Namespace, ServiceAccount and Secrets
+
+1. Create new Namespace ns-secure and perform everything following in there
+2. Create ServiceAccount secret-manager
+3. Create Secret sec-a1 with any literal content of your choice
+4. Create Secret sec-a2 with any file content of your choice (like /etc/hosts )
+
+Tips
+
+k -n ns-secure create secret generic -h
+
+
+Solution
+
+k create ns ns-secure
+k -n ns-secure create sa secret-manager
+k -n ns-secure create secret generic sec-a1 --from-literal user=admin
+k -n ns-secure create secret generic sec-a2 --from-file index=/etc/hosts
+
+
+
+### Lab 4: Create Pod that uses ServiceAccount and Secrets
+
+In Namespace ns-secure create Pod secret-manager with image httpd:alpine which uses the new ServiceAccount
+1. Make Secret sec-a1 available as environment variable SEC_A1
+2. Mount Secret sec-a2 into the Pod read-only under /etc/sec-a2
+
+Verify your solution worked
+
+Solution
+
+k -n ns-secure run secret-manager --image=httpd:alpine -oyaml --dry-run=client > pod.yaml
+
+vim pod.yaml
+
+Edit to:
+
+apiVersion: v1
+kind: Pod
+metadata:
+  labels:
+    run: secret-manager
+  name: secret-manager
+  namespace: ns-secure
+spec:
+  volumes:
+    - name: sec-a2
+      secret:
+        secretName: sec-a2
+  serviceAccountName: secret-manager
+  containers:
+    - image: httpd:alpine
+      name: secret-manager
+      volumeMounts:
+        - name: sec-a2
+          mountPath: /etc/sec-a2
+          readOnly: true
+      env:
+        - name: SEC_A1
+          valueFrom:
+            secretKeyRef:
+              name: sec-a1
+              key: user
+  dnsPolicy: ClusterFirst
+  restartPolicy: Always
+
+
+Lab 5: Enable ETCD Encryption
+Create an EncryptionConfiguration file at /etc/kubernetes/etcd/ec.yaml and make ETCD use it.
+One provider should be of type aesgcm with password this-is-very-sec . All new secrets should be encrypted using this one.
+One provider should be the identity one to still be able to read existing unencrypted secrets.
+
+Solution
+
+Generate EncryptionConfiguration:
+
+mkdir -p /etc/kubernetes/etcd
+echo -n this-is-very-sec | base64
+
+apiVersion: apiserver.config.k8s.io/v1
+kind: EncryptionConfiguration
+resources:
+  - resources:
+    - secrets
+    providers:
+    - aesgcm:
+        keys:
+        - name: key1
+          secret: dGhpcy1pcy12ZXJ5LXNlYw==
+    - identity: {}
+
+1. Add a new volume and volumeMount in /etc/kubernetes/manifests/kube-apiserver.yaml, so that the container can access the file.
+
+2. Pass the new file as argument: --encryption-provider-config=/etc/kubernetes/etcd/ec.yaml
+
+spec:
+  containers:
+  - command:
+    - kube-apiserver
+...
+    - --encryption-provider-config=/etc/kubernetes/etcd/ec.yaml
+...
+    volumeMounts:
+    - mountPath: /etc/kubernetes/etcd
+      name: etcd
+      readOnly: true
+...
+  hostNetwork: true
+  priorityClassName: system-cluster-critical
+  volumes:
+  - hostPath:
+      path: /etc/kubernetes/etcd
+      type: DirectoryOrCreate
+    name: etcd
+...
+
+Wait till apiserver was restarted:
+
+watch crictl ps
+
+
+Ex2: Encrypt existing Secrets
+Encrypt all existing Secrets in Namespace one using the new provider
+Encrypt all existing Secrets in Namespace two using the new provider
+Encrypt all existing Secrets in Namespace three using the new provider
+
+Tip
+
+Recreate Secrets so they are encrypted through the new encryption settings.
+
+
+Solution
+
+ETCDCTL_API=3 etcdctl --cert /etc/kubernetes/pki/apiserver-etcd-client.crt --key /etc/kubernetes/pki/apiserver-etcd-client.key --cacert /etc/kubernetes/pki/etcd/ca.crt get /registry/secrets/one/s1 | hexdump -C
+
+kubectl -n one get secrets -o json | kubectl replace -f -
+kubectl -n two get secrets -o json | kubectl replace -f -
+kubectl -n three get secrets -o json | kubectl replace -f -
+
+To check you can do for example:
+
+ETCDCTL_API=3 etcdctl --cert /etc/kubernetes/pki/apiserver-etcd-client.crt --key /etc/kubernetes/pki/apiserver-etcd-client.key --cacert /etc/kubernetes/pki/etcd/ca.crt get /registry/secrets/one/s1
+ETCDCTL_API=3 etcdctl --cert /etc/kubernetes/pki/apiserver-etcd-client.crt --key /etc/kubernetes/pki/apiserver-etcd-client.key --cacert /etc/kubernetes/pki/etcd/ca.crt get /registry/secrets/one/s1 | hexdump -C
+
+
+The output should be encrypted and prefixed with k8s:enc:aesgcm:v1:key1.
+
+
+
+Lab 6: Container Runtime Sandboxes
+
+Ex1: Install and configure gVisor
+You should install gVisor on the node node01 and make containerd use it.
+
+There is install script /root/gvisor-install.sh which should setup everything, execute it on node node01 .
+
+
+Solution
+
+scp gvisor-install.sh node01:/root
+ssh node01
+    sh gvisor-install.sh
+    service kubelet status
+
+
+Ex2: Create RuntimeClass and Pod to use gVisor
+Now that gVisor should be configured, create a new RuntimeClass for it.
+
+Then create a new Pod named sec using image nginx:1.21.5-alpine .
+
+Verify your setup by running dmesg in the Pod.
+
+
+Tip
+
+The handler for the gVisor RuntimeClass is runsc .
+
+
+Solution
+
+First we create the RuntimeClass
+
+apiVersion: node.k8s.io/v1
+kind: RuntimeClass
+metadata:
+  name: gvisor
+handler: runsc
+
+And the Pod that uses it
+
+
+apiVersion: v1
+kind: Pod
+metadata:
+  name: sec
+spec:
+  runtimeClassName: gvisor
+  containers:
+    - image: nginx:1.21.5-alpine
+      name: sec
+  dnsPolicy: ClusterFirst
+  restartPolicy: Always
+
+Verify
+
+k exec sec -- dmesg | grep -i gvisor
+
+k exec sec -- sh
+/ # dmesg
+[   0.000000] Starting gVisor...
+[   0.389701] Synthesizing system calls...
+[   0.870823] Digging up root...
+[   1.272809] Checking naughty and nice process list...
+[   1.479131] Preparing for the zombie uprising...
+[   1.818536] Forking spaghetti code...
+[   1.887123] Committing treasure map to memory...
+[   1.903422] Generating random numbers by fair dice roll...
+[   1.909199] Singleplexing /dev/ptmx...
+[   2.051494] Conjuring /dev/null black hole...
+[   2.420644] Accelerating teletypewriter to 9600 baud...
+[   2.864336] Setting up VFS...
+[   3.070563] Setting up FUSE...
+[   3.277245] Ready!
+
+
+
+Lab 7: Privileged Containers
+Create a privileged Pod
+Create a Pod named prime image nginx:alpine .
+
+The container should run as privileged .
+
+Install iptables (apk add iptables ) inside the Pod.
+
+Test the capabilities using iptables -L .
+
+
+Solution
+
+Generate Pod yaml
+
+
+k run prime --image=nginx:alpine -oyaml --dry-run=client --command -- sh -c 'sleep 1d' > pod.yaml
+
+Set the privileged :
+
+
+apiVersion: v1
+kind: Pod
+metadata:
+  labels:
+    run: prime
+  name: prime
+spec:
+  containers:
+  - command:
+    - sh
+    - -c
+    - sleep 1d
+    image: nginx:alpine
+    name: prime
+    securityContext:
+      privileged: true
+  dnsPolicy: ClusterFirst
+  restartPolicy: Always
+
+Now exec into the Pod and run apk add iptables .
+
+
+k exec prime -- apk add iptables
+
+You'll see that iptables -L needs capabilities to run which it here gets through privileged.
+
+k exec prime -- iptables -L
+
+OUTPUT:
+controlplane $ k exec prime -- apk add iptables
+fetch https://dl-cdn.alpinelinux.org/alpine/v3.18/main/x86_64/APKINDEX.tar.gz
+fetch https://dl-cdn.alpinelinux.org/alpine/v3.18/community/x86_64/APKINDEX.tar.gz
+(1/3) Installing libmnl (1.0.5-r1)
+(2/3) Installing libnftnl (1.2.5-r1)
+(3/3) Installing iptables (1.8.9-r2)
+Executing busybox-1.36.1-r5.trigger
+OK: 47 MiB in 67 packages
+
+
+controlplane $ k exec prime -- iptables -L
+Chain INPUT (policy ACCEPT)
+target     prot opt source               destination         
+
+Chain FORWARD (policy ACCEPT)
+target     prot opt source               destination         
+
+Chain OUTPUT (policy ACCEPT)
+target     prot opt source               destination         
+controlplane $ 
+
+

@@ -1,0 +1,281 @@
+
+
+### OPA GateKeeper
+
+The "Open Policy Agent Gatekeeper" can be leveraged to help enforce policies and strengthen governance in your Kubernetes environment.
+
+Deploy Gatekeeper in the provided kubernetes cluster.
+
+
+Refer to the OPA Gatekeeper documentation available on the lab terminal for installation guidelines.
+
+Note: It may take some time for all components to install.
+
+
+Is OPA Gatekeeper deployed to the Kubernetes cluster?
+
+
+
+Solution:
+Navigate to https://open-policy-agent.github.io/gatekeeper/website/docs/install for installation steps.
+Deploy gatekeeper by applying the following to cluster.
+kubectl apply -f https://raw.githubusercontent.com/open-policy-agent/gatekeeper/v3.14.0/deploy/gatekeeper.yaml
+k get ns
+k -n gatekeeper-system get all
+
+Ex2:
+For this step, create an namespace named expense and deploy a pod named opex with nginx image in the newly created namespace.
+
+
+Note: Namespace creation may fail until the Gatekeeper components are installed and running.
+
+
+Is namespace expense created?
+
+Is pod named opex with nginx image created in expense namespace?
+
+Solution:
+kubectl create ns expense
+kubectl run opex -n expense --image=nginx
+
+Ex3:
+As you can see in previous step, you were able to create resources without any enforcements and this might lead to several challenges and potential issues within a Kubernetes environment.
+
+With OPA Gatekeeper, you can best practices and organizational conventions for your resources in your kubernetes cluster.
+
+For example, you can enforce policies like:
+
+All namespaces must have a label that lists a point-of-contact
+All images must be from approved repositories
+All pods must have resource limits
+
+
+You team has shared a requirement that every pod created in the namespace engineering should need a label tech.
+
+Create a pod alpha in namespace engineering with label tech: web using nginx image.
+
+
+CheckCompleteIncomplete
+Is pod alpha created in engineering namespace?
+
+Is pod alpha created with nginx image and has label tech=web?
+
+
+Solution:
+You can create a pod named ruby with image ruby:alpine along with label as follows:
+kubectl run -n engineering alpha --image=nginx --labels="tech=web"
+
+
+Ex3:
+In previous step, you created a pod as per your team requirement but there might be instances where you might miss adding labels to the pods. In order to enforce these rules, we use OPA Gatekeeper.
+
+For this step, create an ConstraintTemplate with name k8srequiredlabels with target admission.k8s.gatekeeper.sh and using the following rego.
+
+package k8srequiredlabels
+
+        violation[{"msg": msg, "details": {"missing_labels": missing}}] {
+          provided := {label | input.review.object.metadata.labels[label]}
+          required := {label | label := input.parameters.labels[_]}
+          missing := required - provided
+          count(missing) > 0
+          msg := sprintf("you must provide labels: %v", [missing])
+        }
+
+Note: You can refer to Gatekeeper docs provided on top of terminal.
+
+CheckCompleteIncomplete
+Is ConstraintTemplate k8srequiredlabels created?
+
+
+Solution:
+Create an ConstraintTemplate using the following manifest:
+apiVersion: templates.gatekeeper.sh/v1
+kind: ConstraintTemplate                    
+metadata:
+  name: k8srequiredlabels
+spec:
+  crd:
+    spec:
+      names:
+        kind: K8sRequiredLabels                                 
+      validation:
+        openAPIV3Schema:
+          type: object
+          properties:
+            labels:
+              type: array
+              items:
+                type: string
+  targets:
+    - target: admission.k8s.gatekeeper.sh
+      rego: |                                     
+        package k8srequiredlabels
+
+        violation[{"msg": msg, "details": {"missing_labels": missing}}] {
+          provided := {label | input.review.object.metadata.labels[label]}
+          required := {label | label := input.parameters.labels[_]}
+          missing := required - provided
+          count(missing) > 0
+          msg := sprintf("you must provide labels: %v", [missing])
+        }
+
+
+Now, let's create a Constraint named require-tech-label that will enforce that every pod in engineering namespace must have a label named tech when as pod is created.
+
+
+Note: You can refer to Gatekeeper docs provided on top of terminal.
+
+CheckCompleteIncomplete
+Is constraint require-tech-label created with required values?
+
+Solution:
+You can make use of following manifest to create a Constraint that will enforce that every pod in engineering namespace must have a label named tech:
+apiVersion: constraints.gatekeeper.sh/v1beta1
+kind: K8sRequiredLabels
+metadata:
+  name: require-tech-label
+spec:
+  match:
+    namespaces: ["engineering"]
+  parameters:
+    labels: ["tech"]
+
+
+
+Now, try to create a pod in engineering namespace without label tech. Were you able to create the pod?
+
+Solution:
+The pod won't be created as it will violate a condition that we enforced using ConstraintTemplate and Constraints in previous steps.
+
+controlplane ~ ➜  k -n engineering run pod --image=nginx
+Error from server (Forbidden): admission webhook "validation.gatekeeper.sh" denied the request: [require-tech-label] you must provide labels: {"tech"}
+
+
+Ex4:
+Your team now wants to enforce a policy which enforces the number of replicas in deployments to be in range of 2 to 5 only.
+
+Create an GateKeeper ConstraintTemplate k8sreplicalimits for this policy
+Create a Constraint named replica-limits that uses created template CRD to enforce constraints on replicas, setting limits within the range of 2 to 5.
+
+Note: You can make use of k8sreplicalimits.yaml at /root location for creating ConstraintTemplate.
+
+We have also provided Gatekeeper documentation on top of the terminal.
+
+Please note that, we have removed the existing Gatekeeper CRDs.
+
+CheckCompleteIncomplete
+Is ConstraintTemplate k8sreplicalimits created?
+
+Is constraint replica-limits created using CRD k8sreplicalimits?
+
+Is constraint replica-limits enforces the limits of 2 and 3 to deployment replicas?
+
+
+Solution:
+controlplane ~ ➜  cat k8sreplicalimits.yaml 
+apiVersion: templates.gatekeeper.sh/v1
+kind: ConstraintTemplate
+metadata:
+  name: k8sreplicalimits
+  annotations:
+    metadata.gatekeeper.sh/title: "Replica Limits"
+    metadata.gatekeeper.sh/version: 1.0.1
+    description: >-
+      Requires that objects with the field `spec.replicas` (Deployments,
+      ReplicaSets, etc.) specify a number of replicas within defined ranges.
+spec:
+  crd:
+    spec:
+      names:
+        kind: K8sReplicaLimits
+      validation:
+        # Schema for the `parameters` field
+        openAPIV3Schema:
+          type: object
+          properties:
+            ranges:
+              type: array
+              description: Allowed ranges for numbers of replicas.  Values are inclusive.
+              items:
+                type: object
+                description: A range of allowed replicas.  Values are inclusive.
+                properties:
+                  min_replicas:
+                    description: The minimum number of replicas allowed, inclusive.
+                    type: integer
+                  max_replicas:
+                    description: The maximum number of replicas allowed, inclusive.
+                    type: integer
+  targets:
+    - target: admission.k8s.gatekeeper.sh
+      rego: |
+        package k8sreplicalimits
+
+        object_name = input.review.object.metadata.name
+        object_kind = input.review.kind.kind
+
+        violation[{"msg": msg}] {
+            spec := input.review.object.spec
+            not input_replica_limit(spec)
+            msg := sprintf("The provided number of replicas is not allowed for %v: %v. Allowed ranges: %v", [object_kind, object_name, input.parameters])
+        }
+
+        input_replica_limit(spec) {
+            provided := input.review.object.spec.replicas
+            count(input.parameters.ranges) > 0
+            range := input.parameters.ranges[_]
+            value_within_range(range, provided)
+        }
+
+        value_within_range(range, value) {
+            range.min_replicas <= value
+            range.max_replicas >= value
+        }
+
+
+To create ConstraintTemplate k8sreplicalimits, use the provided manifest.
+kubectl apply -f k8sreplicalimits.yaml
+Once, the template is created, create a Constraint k8sreplicalimits that will use the ConstraintTemplate k8sreplicalimits. You can use the following manifest to enforce the replica limits.
+apiVersion: constraints.gatekeeper.sh/v1beta1
+kind: K8sReplicaLimits
+metadata:
+  name: replica-limits
+spec:
+  match:
+    kinds:
+      - apiGroups: ["apps"]
+        kinds: ["Deployment"]
+  parameters:
+    ranges:
+    - min_replicas: 2
+      max_replicas: 5
+
+
+
+Ex5:
+For this step, try to create two deployments alpha and beta in `default namespace.
+
+Create alpha deployment with image nginx with 3 replicas.
+Create sigma deployment with image busybox with 6 replicas.
+Are both deployments alpha and sigma created?
+
+Solution:
+controlplane ~ ✖ k create deployment alpha --image=nginx --replicas=3
+deployment.apps/alpha created
+
+controlplane ~ ➜  k create deployment sigma --image=busybox --replicas=6
+error: failed to create deployment: admission webhook "validation.gatekeeper.sh" denied the request: [replica-limits] The provided number of replicas is not allowed for Deployment: sigma. Allowed ranges: {"ranges": [{"max_replicas": 5, "min_replicas": 2}]}
+
+
+Only alpha deployment created
+
+
+Deployment sigma is not created as it violates the maximum limit of replicas 5 defined in the Constraint replicas-limit.
+
+There are several enforcements like these that you can create using OPA Gatekeeper and these can help you to maintain best practices and organizational conventions for your resources in your kubernetes cluster.
+
+Navigate to Gatekeeper Library for a library of policies for OPA gatekeeper projects.
+
+
+
+

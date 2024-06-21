@@ -1,0 +1,145 @@
+Lab 1: Syscall Activity Strace
+
+Ex1: Use strace to investigate some common commands
+Use strace to see which syscalls the following commands perform:
+
+kill -9 1234
+
+kill -15 1234
+
+uname
+
+nc -l -p 8080
+
+
+Solution
+
+Usage of strace will actually list various syscalls a process makes. But let's look at a few main ones.
+
+
+strace kill -9 1234
+
+strace kill -9 1234 2>&1 | grep 1234
+
+# here we see: kill(1234, SIGKILL)
+
+strace kill -15 1234
+
+strace kill -15 1234 2>&1 | grep 1234
+
+# here we see: kill(1234, SIGTERM)
+
+strace uname
+
+# here we see: the syscall is also called just uname
+
+strace nc -l -p 8080 2>&1 | grep 8080
+
+# here we see: bind(3, {sa_family=AF_INET, sin_port=htons(8080), sin_addr=inet_addr("0.0.0.0")}, 16)
+
+This should just give us a general idea of how strace works.
+
+
+
+Ex2: Use strace to investigate Apiserver process
+Use strace to see what kind of syscalls the kube-apiserver process performs.
+
+
+Solution
+
+First we find the Apiserver process
+
+
+ps aux | grep kube-apiserver
+
+Then we use strace and pass the PID
+
+
+strace -p 19890 -f # use your PID
+
+# we use -f for "follow forks"
+
+Well, that's a bit much. Let's count and summarise
+
+
+strace -p 19890 -f -cw # use your PID
+
+# run for a bit, then abort with Ctrl+C
+# we should see a nice list of all syscalls.
+
+
+
+Lab 2: Falco Change Rule
+
+Ex1: Investigate a Falco Rule
+Falco has been installed on Node controlplane and it runs as a service.
+
+It's configured to log to syslog, and this is where the verification for this scenario also looks.
+
+Cause the rule "shell in a container" to log by:
+
+creating a new Pod image nginx:alpine
+kubectl exec pod -- sh into it
+check the Falco logs contain a related output
+
+Tip
+
+service falco status
+
+cat /var/log/syslog | grep falco
+
+Solution
+
+k run pod --image=nginx:alpine
+
+k exec -it pod -- sh
+
+cat /var/log/syslog | grep falco | grep shell
+
+
+Ex2: Change a Falco Rule
+Change the Falco output of rule "Terminal shell in container" to:
+
+include NEW SHELL!!! at the very beginning
+include user_id=%user.uid at any position
+include repo=%container.image.repository at any position
+Cause syslog output again by creating a shell in that Pod.
+
+Verify the syslogs contain the new data.
+
+
+Tip
+https://falco.org/docs/rules/supported-fields
+
+
+cd /etc/falco/
+
+grep -ri "shell in"
+
+Solution
+
+cd /etc/falco/
+
+cp falco_rules.yaml falco_rules.local.yaml
+
+vim falco_rules.local.yaml
+
+- rule: Terminal shell in container
+  desc: A shell was used as the entrypoint/exec point into a container with an attached terminal.
+  condition: >
+    spawned_process and container
+    and shell_procs and proc.tty != 0
+    and container_entrypoint
+    and not user_expected_terminal_shell_in_container_conditions
+  output: >
+    NEW SHELL!!! (user_id=%user.uid repo=%container.image.repository %user.uiduser=%user.name user_loginuid=%user.loginuid %container.info
+    shell=%proc.name parent=%proc.pname cmdline=%proc.cmdline terminal=%proc.tty container_id=%container.id image=%container.image.repository)
+  priority: NOTICE
+  tags: [container, shell, mitre_execution]
+
+service falco restart
+
+k exec -it pod -- sh
+
+cat /var/log/syslog | grep falco | grep shell
+
